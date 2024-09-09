@@ -1,5 +1,7 @@
 # Shadow
 
+<img src="images/shadow.png" alt="Shadow Logo" width="375" height="375" />
+
 Monitor or control remote user sessions.
 
 ## Description
