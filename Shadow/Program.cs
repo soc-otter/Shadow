@@ -2,11 +2,12 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
+using System.Drawing.Drawing2D;
 using System.Text.RegularExpressions;
 using System.Windows.Forms;
 using System.Threading.Tasks;
 using Microsoft.Win32;
-//
+
 public class ShadowingApp : Form
 {
     private TextBox? ipv4TextBox;
@@ -27,10 +28,37 @@ public class ShadowingApp : Form
     private int spinnerIndex = 0;
     private Dictionary<string, System.Windows.Forms.Timer> connectedHosts = new Dictionary<string, System.Windows.Forms.Timer>();
 
+    private List<SmokeParticle> smokeParticles;
+    private Random random;
+    private System.Windows.Forms.Timer animationTimer;
+
+    private class SmokeParticle
+    {
+        public PointF Position { get; set; }
+        public float Size { get; set; }
+        public float Opacity { get; set; }
+        public float Angle { get; set; }
+        public PointF Control1 { get; set; }
+        public PointF Control2 { get; set; }
+    }
+
     public ShadowingApp()
     {
         InitializeComponent();
         AppDomain.CurrentDomain.UnhandledException += OnUnhandledException;
+
+        // Initialize smoke animation
+        smokeParticles = new List<SmokeParticle>();
+        random = new Random();
+
+        // Set up timer for smoke animation
+        animationTimer = new System.Windows.Forms.Timer();
+        animationTimer.Interval = 50;
+        animationTimer.Tick += AnimationTimer_Tick;
+        animationTimer.Start();
+
+        // Enable double buffering
+        this.DoubleBuffered = true;
     }
 
     private void InitializeComponent()
@@ -39,25 +67,25 @@ public class ShadowingApp : Form
         this.Text = "Shadow";
         this.Size = new Size(420, 380);
         this.StartPosition = FormStartPosition.CenterScreen;
-        this.BackColor = Color.FromArgb(230, 240, 255);
+        this.BackColor = Color.FromArgb(30, 30, 30);
         this.FormBorderStyle = FormBorderStyle.FixedDialog;
         this.MaximizeBox = false;
+        this.DoubleBuffered = true;
+
+        // Set the form's paint event
+        this.Paint += ShadowingApp_Paint;
 
         // Instruction Label
         Label instructionLabel = new Label();
         instructionLabel.Text = "Please select a method to identify a target machine:";
         instructionLabel.Location = new Point(20, 20);
-        instructionLabel.Size = new Size(380, 40); // Increased width and height
+        instructionLabel.Size = new Size(380, 40);
         instructionLabel.Font = new Font("Segoe UI", 11, FontStyle.Bold);
-        instructionLabel.ForeColor = Color.FromArgb(40, 80, 120);
+        instructionLabel.ForeColor = Color.FromArgb(200, 200, 200);
         this.Controls.Add(instructionLabel);
 
         // IPv4 Label
-        Label ipv4Label = new Label();
-        ipv4Label.Text = "IPv4:";
-        ipv4Label.Location = new Point(20, 60);
-        ipv4Label.Size = new Size(120, 20);
-        ipv4Label.Font = new Font("Segoe UI", 9);
+        Label ipv4Label = CreateLabel("IPv4:", new Point(20, 60));
         this.Controls.Add(ipv4Label);
 
         // IPv4 TextBox
@@ -65,11 +93,7 @@ public class ShadowingApp : Form
         ipv4TextBox.TextChanged += (s, e) => HandleInputChanged(ipv4TextBox, ipv6TextBox, hostnameTextBox);
 
         // IPv6 Label
-        Label ipv6Label = new Label();
-        ipv6Label.Text = "IPv6:";
-        ipv6Label.Location = new Point(20, 100);
-        ipv6Label.Size = new Size(120, 20);
-        ipv6Label.Font = new Font("Segoe UI", 9);
+        Label ipv6Label = CreateLabel("IPv6:", new Point(20, 100));
         this.Controls.Add(ipv6Label);
 
         // IPv6 TextBox
@@ -77,11 +101,7 @@ public class ShadowingApp : Form
         ipv6TextBox.TextChanged += (s, e) => HandleInputChanged(ipv6TextBox, ipv4TextBox, hostnameTextBox);
 
         // Hostname Label
-        Label hostnameLabel = new Label();
-        hostnameLabel.Text = "Hostname:";
-        hostnameLabel.Location = new Point(20, 140);
-        hostnameLabel.Size = new Size(120, 20);
-        hostnameLabel.Font = new Font("Segoe UI", 9);
+        Label hostnameLabel = CreateLabel("Hostname:", new Point(20, 140));
         this.Controls.Add(hostnameLabel);
 
         // Hostname TextBox
@@ -100,7 +120,7 @@ public class ShadowingApp : Form
         statusLabel = new Label();
         statusLabel.Location = new Point(50, 230);
         statusLabel.Size = new Size(300, 20);
-        statusLabel.ForeColor = Color.Green;
+        statusLabel.ForeColor = Color.FromArgb(0, 200, 0);
         statusLabel.Font = new Font("Segoe UI", 9, FontStyle.Regular);
         statusLabel.Visible = false;
         this.Controls.Add(statusLabel);
@@ -118,26 +138,12 @@ public class ShadowingApp : Form
         loadingTimer.Tick += LoadingTimer_Tick;
 
         // OK Button
-        okButton = new Button();
-        okButton.Text = "OK";
-        okButton.Location = new Point(100, 270);
-        okButton.Size = new Size(100, 30);
-        okButton.BackColor = Color.FromArgb(0, 160, 220);
-        okButton.ForeColor = Color.White;
-        okButton.FlatStyle = FlatStyle.Flat;
-        okButton.FlatAppearance.BorderSize = 0;
+        okButton = CreateButton("OK", new Point(100, 270));
         okButton.Click += OkButton_Click;
         this.Controls.Add(okButton);
 
         // Cancel Button
-        cancelButton = new Button();
-        cancelButton.Text = "Cancel";
-        cancelButton.Location = new Point(210, 270);
-        cancelButton.Size = new Size(100, 30);
-        cancelButton.BackColor = Color.FromArgb(0, 160, 220);
-        cancelButton.ForeColor = Color.White;
-        cancelButton.FlatStyle = FlatStyle.Flat;
-        cancelButton.FlatAppearance.BorderSize = 0;
+        cancelButton = CreateButton("Cancel", new Point(210, 270));
         cancelButton.Click += (s, e) => this.Close();
         this.Controls.Add(cancelButton);
 
@@ -149,15 +155,43 @@ public class ShadowingApp : Form
         this.instructionLabel = new Label();
     }
 
+    private Label CreateLabel(string text, Point location)
+    {
+        Label label = new Label();
+        label.Text = text;
+        label.Location = location;
+        label.Size = new Size(120, 20);
+        label.Font = new Font("Segoe UI", 9);
+        label.ForeColor = Color.FromArgb(200, 200, 200);
+        return label;
+    }
+
     private TextBox CreateTextBox(string placeholder, Point location)
     {
         TextBox textBox = new TextBox();
         textBox.Location = location;
         textBox.Width = 200;
         textBox.Font = new Font("Segoe UI", 9);
+        textBox.ForeColor = Color.FromArgb(200, 200, 200);
+        textBox.BackColor = Color.FromArgb(45, 45, 45);
         textBox.PlaceholderText = placeholder;
         this.Controls.Add(textBox);
         return textBox;
+    }
+
+    private Button CreateButton(string text, Point location)
+    {
+        Button button = new Button();
+        button.Text = text;
+        button.Location = location;
+        button.Size = new Size(100, 30);
+        button.FlatStyle = FlatStyle.Flat;
+        button.FlatAppearance.BorderSize = 1;
+        button.FlatAppearance.BorderColor = Color.FromArgb(100, 100, 100);
+        button.BackColor = Color.FromArgb(60, 60, 60);
+        button.ForeColor = Color.FromArgb(200, 200, 200);
+        button.Font = new Font("Segoe UI", 9, FontStyle.Bold);
+        return button;
     }
 
     private void HandleInputChanged(TextBox source, TextBox? clear1, TextBox? clear2)
@@ -202,18 +236,17 @@ public class ShadowingApp : Form
 
     private void ShowStatus(string message, bool showSpinner = false)
     {
-        if (errorLabel != null)
+        if (statusLabel != null)
         {
-            errorLabel.Text = message;
-            errorLabel.ForeColor = Color.Green;
-            errorLabel.Visible = !string.IsNullOrEmpty(message);
+            statusLabel.Text = message;
+            statusLabel.Visible = !string.IsNullOrEmpty(message);
         }
         if (loadingSpinnerPanel != null)
         {
             loadingSpinnerPanel.Visible = showSpinner && !string.IsNullOrEmpty(message);
-            if (errorLabel != null)
+            if (statusLabel != null)
             {
-                loadingSpinnerPanel.Location = new Point(errorLabel.Left - 25, errorLabel.Top);
+                loadingSpinnerPanel.Location = new Point(statusLabel.Left - 25, statusLabel.Top);
             }
         }
         if (!string.IsNullOrEmpty(message) && showSpinner)
@@ -374,7 +407,7 @@ public class ShadowingApp : Form
         headerLabel.Location = new Point(20, 20);
         headerLabel.Size = new Size(350, 30);
         headerLabel.Font = new Font("Segoe UI", 11, FontStyle.Bold);
-        headerLabel.ForeColor = Color.FromArgb(40, 80, 120);
+        headerLabel.ForeColor = Color.FromArgb(200, 200, 200);
         this.Controls.Add(headerLabel);
 
         sessionListView = new ListView();
@@ -386,6 +419,8 @@ public class ShadowingApp : Form
         sessionListView.Columns.Add("Session ID", 100);
         sessionListView.Columns.Add("State", 150);
         sessionListView.Font = new Font("Segoe UI", 9);
+        sessionListView.BackColor = Color.FromArgb(45, 45, 45);
+        sessionListView.ForeColor = Color.FromArgb(200, 200, 200);
         sessionListView.ItemSelectionChanged += SessionListView_ItemSelectionChanged;
         this.Controls.Add(sessionListView);
 
@@ -402,41 +437,20 @@ public class ShadowingApp : Form
         instructionLabel.Location = new Point(20, 170);
         instructionLabel.Size = new Size(350, 20);
         instructionLabel.Font = new Font("Segoe UI", 9, FontStyle.Italic);
-        instructionLabel.ForeColor = Color.FromArgb(40, 80, 120);
+        instructionLabel.ForeColor = Color.FromArgb(200, 200, 200);
         this.Controls.Add(instructionLabel);
 
-        monitorButton = new Button();
-        monitorButton.Text = "Monitor";
-        monitorButton.Location = new Point(100, 200);
-        monitorButton.Size = new Size(100, 30);
-        monitorButton.BackColor = Color.FromArgb(0, 160, 220);
-        monitorButton.ForeColor = Color.White;
-        monitorButton.FlatStyle = FlatStyle.Flat;
-        monitorButton.FlatAppearance.BorderSize = 0;
+        monitorButton = CreateButton("Monitor", new Point(100, 200));
         monitorButton.Click += (s, e) => StartShadowSession("monitor");
         monitorButton.Visible = false;
         this.Controls.Add(monitorButton);
 
-        controlButton = new Button();
-        controlButton.Text = "Control";
-        controlButton.Location = new Point(210, 200);
-        controlButton.Size = new Size(100, 30);
-        controlButton.BackColor = Color.FromArgb(0, 160, 220);
-        controlButton.ForeColor = Color.White;
-        controlButton.FlatStyle = FlatStyle.Flat;
-        controlButton.FlatAppearance.BorderSize = 0;
+        controlButton = CreateButton("Control", new Point(210, 200));
         controlButton.Click += (s, e) => StartShadowSession("control");
         controlButton.Visible = false;
         this.Controls.Add(controlButton);
 
-        backButton = new Button();
-        backButton.Text = "Back";
-        backButton.Location = new Point(20, 270);
-        backButton.Size = new Size(100, 30);
-        backButton.BackColor = Color.FromArgb(0, 160, 220);
-        backButton.ForeColor = Color.White;
-        backButton.FlatStyle = FlatStyle.Flat;
-        backButton.FlatAppearance.BorderSize = 0;
+        backButton = CreateButton("Back", new Point(20, 270));
         backButton.Click += (s, e) => ShowInitialScreen();
         this.Controls.Add(backButton);
 
@@ -445,7 +459,7 @@ public class ShadowingApp : Form
         statusLabel.Location = new Point(20, 240);
         statusLabel.Size = new Size(350, 20);
         statusLabel.Font = new Font("Segoe UI", 9, FontStyle.Regular);
-        statusLabel.ForeColor = Color.Green;
+        statusLabel.ForeColor = Color.FromArgb(0, 200, 0);
         statusLabel.Visible = false;
         this.Controls.Add(statusLabel);
 
@@ -472,7 +486,7 @@ public class ShadowingApp : Form
         if (instructionLabel != null) instructionLabel.Visible = !isItemSelected;
     }
 
-    private async void StartShadowSession(string mode)
+    private void StartShadowSession(string mode)
     {
         var selectedSession = sessionListView?.SelectedItems.Count > 0 ? sessionListView.SelectedItems[0] : null;
         if (selectedSession == null || selectedTarget == null)
@@ -518,16 +532,22 @@ public class ShadowingApp : Form
                     ConfigureRegistry(0);
                     resetTimer.Stop();
                     resetTimer.Dispose();
-                    connectedHosts[selectedTarget] = null;
+                    if (selectedTarget != null)
+                    {
+                        connectedHosts[selectedTarget] = null;
+                    }
                 };
                 resetTimer.Start();
 
                 // Add or update the host in our dictionary
-                if (connectedHosts.ContainsKey(selectedTarget))
+                if (selectedTarget != null)
                 {
-                    connectedHosts[selectedTarget]?.Dispose();
+                    if (connectedHosts.ContainsKey(selectedTarget))
+                    {
+                        connectedHosts[selectedTarget]?.Dispose();
+                    }
+                    connectedHosts[selectedTarget] = resetTimer;
                 }
-                connectedHosts[selectedTarget] = resetTimer;
 
                 // Don't wait for the process to exit
                 Task.Run(async () =>
@@ -548,7 +568,10 @@ public class ShadowingApp : Form
                             }
                             resetTimer.Stop();
                             resetTimer.Dispose();
-                            connectedHosts.Remove(selectedTarget);
+                            if (selectedTarget != null)
+                            {
+                                connectedHosts.Remove(selectedTarget);
+                            }
                             ConfigureRegistry(0);
                         });
                     }
@@ -639,6 +662,90 @@ public class ShadowingApp : Form
             System.Threading.Thread.Sleep(20);
         }
         this.Location = original;
+    }
+
+    private void AnimationTimer_Tick(object sender, EventArgs e)
+    {
+        // Add new smoke particles
+        if (smokeParticles.Count < 20)
+        {
+            float angle = (float)(random.NextDouble() * Math.PI * 2);
+            float size = random.Next(30, 60);
+            PointF position = new PointF(random.Next(Width), Height + size);
+
+            smokeParticles.Add(new SmokeParticle
+            {
+                Position = position,
+                Size = size,
+                Opacity = 0.7f,
+                Angle = angle,
+                Control1 = new PointF(
+                    position.X + (float)Math.Cos(angle) * size * 0.5f,
+                    position.Y + (float)Math.Sin(angle) * size * 0.5f
+                ),
+                Control2 = new PointF(
+                    position.X + (float)Math.Cos(angle + Math.PI) * size * 0.5f,
+                    position.Y + (float)Math.Sin(angle + Math.PI) * size * 0.5f
+                )
+            });
+        }
+
+        // Update existing particles
+        for (int i = smokeParticles.Count - 1; i >= 0; i--)
+        {
+            var particle = smokeParticles[i];
+            particle.Position = new PointF(
+                particle.Position.X + (float)(random.NextDouble() * 2 - 1),
+                particle.Position.Y - (1 + random.Next(2)));
+            particle.Opacity -= 0.01f;
+            particle.Size += 0.5f;
+            particle.Angle += (float)(random.NextDouble() * 0.1 - 0.05);
+
+            // Update control points
+            particle.Control1 = new PointF(
+                particle.Position.X + (float)Math.Cos(particle.Angle) * particle.Size * 0.5f,
+                particle.Position.Y + (float)Math.Sin(particle.Angle) * particle.Size * 0.5f
+            );
+            particle.Control2 = new PointF(
+                particle.Position.X + (float)Math.Cos(particle.Angle + Math.PI) * particle.Size * 0.5f,
+                particle.Position.Y + (float)Math.Sin(particle.Angle + Math.PI) * particle.Size * 0.5f
+            );
+
+            if (particle.Position.Y + particle.Size < 0 || particle.Opacity <= 0)
+            {
+                smokeParticles.RemoveAt(i);
+            }
+        }
+
+        this.Invalidate(); // Trigger a repaint
+    }
+
+    private void ShadowingApp_Paint(object sender, PaintEventArgs e)
+    {
+        e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+
+        // Draw smoke particles
+        foreach (var particle in smokeParticles)
+        {
+            using (var path = new GraphicsPath())
+            {
+                path.AddBezier(
+                    particle.Position.X - particle.Size / 2, particle.Position.Y,
+                    particle.Control1.X, particle.Control1.Y,
+                    particle.Control2.X, particle.Control2.Y,
+                    particle.Position.X + particle.Size / 2, particle.Position.Y
+                );
+
+                using (var brush = new PathGradientBrush(path))
+                {
+                    int alpha = (int)(particle.Opacity * 255);
+                    brush.CenterColor = Color.FromArgb(alpha, 150, 150, 150);
+                    brush.SurroundColors = new Color[] { Color.FromArgb(0, 150, 150, 150) };
+
+                    e.Graphics.FillPath(brush, path);
+                }
+            }
+        }
     }
 
     protected override void OnFormClosing(FormClosingEventArgs e)
